@@ -5,18 +5,19 @@ import android.content.pm.PackageManager
 import android.os.Build
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Surface
+import androidx.compose.material3.Text
 import androidx.compose.runtime.*
-import androidx.compose.material3.*
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.core.content.ContextCompat
 import com.example.fitnessquest.sensor.StepSensorManager
 import com.example.fitnessquest.sensor.StepViewModel
-import androidx.compose.foundation.layout.Column
-import androidx.compose.material3.Surface
-import androidx.compose.material3.Text
-import androidx.compose.runtime.Composable
-import androidx.compose.runtime.DisposableEffect
-import androidx.compose.runtime.getValue
 
 @Composable
 fun StepScreen(viewModel: StepViewModel) {
@@ -26,7 +27,6 @@ fun StepScreen(viewModel: StepViewModel) {
 
     var sensorManager by remember { mutableStateOf<StepSensorManager?>(null) }
 
-    // Permission launcher
     val permissionLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.RequestPermission()
     ) { granted ->
@@ -62,10 +62,24 @@ fun StepScreen(viewModel: StepViewModel) {
         }
     }
 
-    Surface {
-        Column {
-            Text(text = "Steps Today")
-            Text(text = steps.toString())
+    Surface(
+        modifier = Modifier.fillMaxSize()
+    ) {
+        Column(
+            modifier = Modifier.fillMaxSize(),
+            verticalArrangement = Arrangement.Center,
+            horizontalAlignment = Alignment.CenterHorizontally
+        ) {
+
+            Text(
+                text = "Steps Today",
+                style = MaterialTheme.typography.headlineMedium
+            )
+
+            Text(
+                text = steps.toString(),
+                style = MaterialTheme.typography.displayLarge
+            )
         }
     }
 }

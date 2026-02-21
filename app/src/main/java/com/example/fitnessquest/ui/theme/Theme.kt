@@ -1,4 +1,4 @@
-package edu.singaporetech.csd3156quiz2.ui.theme
+package com.example.fitnessquest.ui.theme
 
 import android.app.Activity
 import android.os.Build

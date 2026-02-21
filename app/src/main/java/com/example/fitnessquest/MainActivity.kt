@@ -1,4 +1,4 @@
-package edu.singaporetech.csd3156quiz2
+package com.example.fitnessquest
 
 import android.Manifest
 import android.app.NotificationChannel
@@ -62,7 +62,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.app.NotificationCompat
 import androidx.core.content.ContextCompat
-import edu.singaporetech.csd3156quiz2.ui.theme.FitnessQuestTheme
+import com.example.fitnessquest.ui.theme.FitnessQuestTheme
 import java.text.SimpleDateFormat
 import java.util.Calendar
 import java.util.Locale

@@ -1,4 +1,4 @@
-package edu.singaporetech.csd3156quiz2
+package com.example.fitnessquest
 
 import android.Manifest
 import android.app.NotificationChannel

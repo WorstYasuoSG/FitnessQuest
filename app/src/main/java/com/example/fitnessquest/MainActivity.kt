@@ -67,6 +67,65 @@ import java.text.SimpleDateFormat
 import java.util.Calendar
 import java.util.Locale
 import java.util.TimeZone
+import android.hardware.Sensor
+import android.hardware.SensorEvent
+import android.hardware.SensorEventListener
+import android.hardware.SensorManager
+import androidx.lifecycle.ViewModel
+import androidx.lifecycle.viewmodel.compose.viewModel
+
+class StepViewModel : ViewModel() {
+    private val _steps = mutableStateOf(0)
+    val steps: State<Int> = _steps
+
+    fun updateSteps(newSteps: Int) {
+        _steps.value = newSteps
+    }
+}
+
+class StepSensorManager(
+    context: Context,
+    private val onStepChanged: (Int) -> Unit
+) : SensorEventListener {
+
+    private val sensorManager =
+        context.getSystemService(Context.SENSOR_SERVICE) as SensorManager
+
+    private val stepSensor: Sensor? =
+        sensorManager.getDefaultSensor(Sensor.TYPE_STEP_COUNTER)
+
+    private var initialStepCount: Int? = null
+
+    fun start() {
+        stepSensor?.let {
+            sensorManager.registerListener(
+                this,
+                it,
+                SensorManager.SENSOR_DELAY_UI
+            )
+        }
+    }
+
+    fun stop() {
+        sensorManager.unregisterListener(this)
+    }
+
+    override fun onSensorChanged(event: SensorEvent?) {
+        if (event == null) return
+
+        val totalSteps = event.values[0].toInt()
+
+        if (initialStepCount == null) {
+            initialStepCount = totalSteps
+        }
+
+        val currentSessionSteps = totalSteps - (initialStepCount ?: 0)
+
+        onStepChanged(currentSessionSteps)
+    }
+
+    override fun onAccuracyChanged(sensor: Sensor?, accuracy: Int) {}
+}
 
 // --- Data Models ---
 data class UserStats(
@@ -253,6 +312,8 @@ class MainActivity : ComponentActivity() {
 
 @Composable
 fun FitnessQuestApp() {
+    val stepViewModel: StepViewModel = viewModel()
+    val realSteps by stepViewModel.steps
     val context = LocalContext.current
     val storageManager = remember {
         StorageManager(context.getSharedPreferences("FitnessQuestDB", Context.MODE_PRIVATE))
@@ -285,6 +346,44 @@ fun FitnessQuestApp() {
         }
     }
 
+    var hasActivityPermission by remember {
+        mutableStateOf(
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                ContextCompat.checkSelfPermission(
+                    context,
+                    Manifest.permission.ACTIVITY_RECOGNITION
+                ) == PackageManager.PERMISSION_GRANTED
+            } else true
+        )
+    }
+
+    val activityPermissionLauncher =
+        rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) {
+            hasActivityPermission = it
+        }
+
+    LaunchedEffect(Unit) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q && !hasActivityPermission) {
+            activityPermissionLauncher.launch(Manifest.permission.ACTIVITY_RECOGNITION)
+        }
+    }
+
+    var sensorManager by remember { mutableStateOf<StepSensorManager?>(null) }
+
+    LaunchedEffect(hasActivityPermission) {
+        if (hasActivityPermission) {
+            sensorManager = StepSensorManager(context) {
+                stepViewModel.updateSteps(it)
+            }
+            sensorManager?.start()
+        }
+    }
+
+    DisposableEffect(Unit) {
+        onDispose {
+            sensorManager?.stop()
+        }
+    }
     if (!isInitialized) return 
 
     var achievementToPopUp by remember { mutableStateOf<Achievement?>(null) }
@@ -318,6 +417,21 @@ fun FitnessQuestApp() {
         )
     } else {
         val currentUser = userDatabase[loggedInUsername]!!
+        LaunchedEffect(realSteps) {
+            if (realSteps != currentUser.steps) {
+
+                val updatedStepHistory = currentUser.stepHistory.toMutableList()
+                updatedStepHistory[updatedStepHistory.lastIndex] = realSteps
+
+                val updatedUser = currentUser.copy(
+                    steps = realSteps,
+                    stepHistory = updatedStepHistory
+                )
+
+                userDatabase[loggedInUsername!!] = updatedUser
+                storageManager.saveUser(updatedUser)
+            }
+        }
 
         val simulateWorkout = {
             val oldAchievements = getDynamicAchievements(currentUser)
@@ -331,7 +445,6 @@ fun FitnessQuestApp() {
                 newMax = (newMax * 1.2).toInt()
             }
 
-            val newSteps = currentUser.steps + 1500
             val updatedStepHistory = currentUser.stepHistory.toMutableList()
             updatedStepHistory[updatedStepHistory.lastIndex] += 1500
 
@@ -341,8 +454,8 @@ fun FitnessQuestApp() {
             val updatedUser = currentUser.copy(
                 level = newLevel, 
                 currentXp = newXp, 
-                maxXp = newMax, 
-                steps = newSteps,
+                maxXp = newMax,
+                steps = realSteps,
                 stepHistory = updatedStepHistory,
                 xpHistory = updatedXpHistory,
                 workoutsCompleted = currentUser.workoutsCompleted + 1 

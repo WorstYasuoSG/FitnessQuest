@@ -55,47 +55,142 @@ fun AnimatedFitnessQuestLogo(modifier: Modifier = Modifier) {
 }
 
 @Composable
-fun LoginScreen(onAuthenticate: (username: String, isSignUp: Boolean) -> String?) {
+fun LoginScreen(onAuthenticate: (username: String, email: String?, password: String, isSignUp: Boolean) -> Unit,
+                externalError: String? = null,
+                isLoading: Boolean = false) {
     var isLoginMode by remember { mutableStateOf(true) }
     var username by remember { mutableStateOf("") }
+    var email by remember { mutableStateOf("") }
     var password by remember { mutableStateOf("") }
     var errorMessage by remember { mutableStateOf<String?>(null) }
 
     Column(
-        modifier = Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background).padding(32.dp),
-        horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center
+        modifier = Modifier
+            .fillMaxSize()
+            .background(MaterialTheme.colorScheme.background)
+            .padding(32.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.Center
     ) {
         AnimatedFitnessQuestLogo(modifier = Modifier.size(120.dp))
+
         Spacer(modifier = Modifier.height(32.dp))
-        Text("FitnessQuest", style = MaterialTheme.typography.headlineLarge, color = MaterialTheme.colorScheme.primary)
-        Text(if (isLoginMode) "Welcome back, Adventurer!" else "Begin your journey today", style = MaterialTheme.typography.bodyLarge, color = Color.Gray)
-        Spacer(modifier = Modifier.height(48.dp))
-        OutlinedTextField(
-            value = username, onValueChange = { username = it; errorMessage = null },
-            label = { Text("Adventurer Name") }, modifier = Modifier.fillMaxWidth(), singleLine = true, shape = RoundedCornerShape(12.dp)
-        )
-        Spacer(modifier = Modifier.height(16.dp))
-        OutlinedTextField(
-            value = password, onValueChange = { password = it; errorMessage = null },
-            label = { Text("Secret Password") }, modifier = Modifier.fillMaxWidth(), singleLine = true,
-            visualTransformation = PasswordVisualTransformation(), keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password), shape = RoundedCornerShape(12.dp)
-        )
-        if (errorMessage != null) Text(errorMessage!!, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(top = 8.dp).align(Alignment.Start))
-        Spacer(modifier = Modifier.height(16.dp))
+
         Text(
-            if (isLoginMode) "Don't have an account? Sign up here" else "Already have an account? Log in here",
-            color = MaterialTheme.colorScheme.primary, textDecoration = TextDecoration.Underline, style = MaterialTheme.typography.bodyMedium,
-            modifier = Modifier.clickable { isLoginMode = !isLoginMode; errorMessage = null }.padding(8.dp)
+            "FitnessQuest",
+            style = MaterialTheme.typography.headlineLarge,
+            color = MaterialTheme.colorScheme.primary
         )
+
+        Text(
+            if (isLoginMode) "Welcome back, Adventurer!" else "Begin your journey today",
+            style = MaterialTheme.typography.bodyLarge,
+            color = Color.Gray
+        )
+
+        Spacer(modifier = Modifier.height(48.dp))
+
+        // USERNAME
+        OutlinedTextField(
+            value = username,
+            onValueChange = { username = it; errorMessage = null },
+            label = { Text(if (isLoginMode) "Email or Adventurer Name" else "Adventurer Name") },            modifier = Modifier.fillMaxWidth(),
+            singleLine = true,
+            shape = RoundedCornerShape(12.dp)
+        )
+
+        Spacer(modifier = Modifier.height(16.dp))
+
+        // EMAIL (ONLY FOR SIGNUP)
+        if (!isLoginMode) {
+            OutlinedTextField(
+                value = email,
+                onValueChange = { email = it; errorMessage = null },
+                label = { Text("Email Address") },
+                modifier = Modifier.fillMaxWidth(),
+                singleLine = true,
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Email),
+                shape = RoundedCornerShape(12.dp)
+            )
+
+            Spacer(modifier = Modifier.height(16.dp))
+        }
+
+        // PASSWORD
+        OutlinedTextField(
+            value = password,
+            onValueChange = { password = it; errorMessage = null },
+            label = { Text("Secret Password") },
+            modifier = Modifier.fillMaxWidth(),
+            singleLine = true,
+            visualTransformation = PasswordVisualTransformation(),
+            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
+            shape = RoundedCornerShape(12.dp)
+        )
+
+        if (errorMessage != null) {
+            Text(
+                errorMessage!!,
+                color = MaterialTheme.colorScheme.error,
+                style = MaterialTheme.typography.bodySmall,
+                modifier = Modifier.padding(top = 8.dp).align(Alignment.Start)
+            )
+        }
+        LaunchedEffect(externalError) {
+            if (!externalError.isNullOrBlank()) errorMessage = externalError
+        }
+
+        Spacer(modifier = Modifier.height(16.dp))
+
+        Text(
+            if (isLoginMode) "Don't have an account? Sign up here"
+            else "Already have an account? Log in here",
+            color = MaterialTheme.colorScheme.primary,
+            textDecoration = TextDecoration.Underline,
+            style = MaterialTheme.typography.bodyMedium,
+            modifier = Modifier
+                .clickable {
+                    isLoginMode = !isLoginMode
+                    errorMessage = null
+                }
+                .padding(8.dp)
+        )
+
         Spacer(modifier = Modifier.height(32.dp))
+
         Button(
             onClick = {
-                if (username.isBlank()) errorMessage = "Please enter an Adventurer Name."
-                else { val err = onAuthenticate(username.trim(), !isLoginMode); if (err != null) errorMessage = err }
+                when {
+                    username.isBlank() ->
+                        errorMessage = "Please enter an Adventurer Name."
+
+                    password.isBlank() ->
+                        errorMessage = "Please enter a Password."
+
+                    !isLoginMode && email.isBlank() ->
+                        errorMessage = "Please enter an Email Address."
+
+                    else -> {
+                        onAuthenticate(
+                            username.trim(),
+                            if (isLoginMode) null else email.trim(),   // email only for signup
+                            password,
+                            !isLoginMode
+                        )
+                    }
+                }
             },
-            modifier = Modifier.fillMaxWidth().height(56.dp), shape = RoundedCornerShape(16.dp), elevation = ButtonDefaults.buttonElevation(0.dp)
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(56.dp),
+            shape = RoundedCornerShape(16.dp),
+            elevation = ButtonDefaults.buttonElevation(0.dp)
         ) {
-            Text(if (isLoginMode) "Login" else "Create Account", fontSize = 16.sp, fontWeight = FontWeight.Medium)
+            Text(
+                if (isLoginMode) "Login" else "Create Account",
+                fontSize = 16.sp,
+                fontWeight = FontWeight.Medium
+            )
         }
     }
 }

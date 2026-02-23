@@ -33,6 +33,12 @@ import com.example.fitnessquest.sensor.*
 import com.example.fitnessquest.utils.*
 import com.example.fitnessquest.ui.theme.FitnessQuestTheme
 
+//Firebase imports
+
+import com.google.firebase.auth.FirebaseAuth
+import com.google.firebase.firestore.FieldValue
+import com.google.firebase.firestore.FirebaseFirestore
+
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -55,7 +61,6 @@ fun FitnessQuestApp() {
 
     // 2. Global State Variables
     val userDatabase = remember { mutableStateMapOf<String, UserStats>() }
-    var loggedInUsername by remember { mutableStateOf<String?>(null) }
     var currentScreen by remember { mutableStateOf("home") }
     var isInitialized by remember { mutableStateOf(false) }
     var sessionStepsProcessed by remember { mutableStateOf(0) }
@@ -70,51 +75,80 @@ fun FitnessQuestApp() {
 
     // 4. Start Hardware Sensor
     var sensorManager by remember { mutableStateOf<StepSensorManager?>(null) }
+
+    val authVm: AuthViewModel = viewModel()
+    val authState by authVm.uiState.collectAsState()
+    val handleAuth: (String, String?, String, Boolean) -> Unit =
+        { identifier, email, password, isSignUp ->
+
+            if (isSignUp) {
+
+                val safeEmail = email
+
+                if (safeEmail.isNullOrBlank()) {
+                }
+
+                authVm.signUpWithEmail(
+                    email = safeEmail!!,
+                    password = password,
+                    username = identifier
+                )
+
+            } else {
+
+                authVm.signInWithEmailOrUsername(
+                    identifier,
+                    password
+                )
+            }
+        }
+
     LaunchedEffect(hasActivityPermission) {
         if (hasActivityPermission) {
             sensorManager = StepSensorManager(context) { stepViewModel.updateSteps(it) }
             sensorManager?.start()
         }
     }
+
+    LaunchedEffect(authState.uid) {
+        if (authState.uid != null) currentScreen = "home"
+    }
     DisposableEffect(Unit) { onDispose { sensorManager?.stop() } }
 
     // 5. Load Initial Data
     LaunchedEffect(Unit) {
         userDatabase.putAll(storageManager.getAllUsers().associateBy { it.username })
-        loggedInUsername = storageManager.getLoggedInUser()
-        if (loggedInUsername != null) currentScreen = "home"
         isInitialized = true
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU && !hasNotificationPermission) permissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q && !hasActivityPermission) activityPermissionLauncher.launch(Manifest.permission.ACTIVITY_RECOGNITION)
     }
 
-    if (!isInitialized) return 
+    if (!isInitialized) return
+
 
     // --- Authentication Flow ---
-    if (loggedInUsername == null) {
-        LoginScreen { username, isSignUp ->
-            if (isSignUp) {
-                if (userDatabase.containsKey(username)) "Username already taken."
-                else {
-                    val newUser = UserStats(username = username)
-                    userDatabase[username] = newUser
-                    storageManager.saveUser(newUser) 
-                    storageManager.saveLoggedInUser(username) 
-                    loggedInUsername = username; sessionStepsProcessed = 0; currentScreen = "home"
-                    null 
+    if (authState.uid == null) {
+        LoginScreen(
+           /* onAuthenticate = { identifier, email, password, isSignUp ->
+                if (isSignUp) {
+
+                    authVm.signUpWithEmail(
+                        email = email!!,
+                        password = password,
+                        username = identifier
+                    )
+                } else {
+                    authVm.signInWithEmailOrUsername(identifier, password)
                 }
-            } else {
-                if (userDatabase.containsKey(username)) {
-                    storageManager.saveLoggedInUser(username) 
-                    loggedInUsername = username; sessionStepsProcessed = 0; currentScreen = "home"
-                    null 
-                } else "Account not found."
-            }
-        }
+            },*/
+            onAuthenticate = handleAuth,
+            externalError = authState.error,
+            isLoading = authState.loading
+        )
     } else {
-        val currentUser = userDatabase[loggedInUsername]!!
-        
+        val uid = authState.uid!!
+        val currentUser = remember(uid) { UserStats(username = "Loading...") }
         // --- Live Hardware Sensor Processor ---
         LaunchedEffect(realSessionSteps) {
             if (realSessionSteps > sessionStepsProcessed) {
@@ -131,8 +165,6 @@ fun FitnessQuestApp() {
                 updatedXpHistory[updatedXpHistory.lastIndex] += deltaSteps
 
                 val updatedUser = currentUser.copy(steps = newTotalSteps, level = newLevel, currentXp = newCurrentXp, maxXp = newMaxXp, stepHistory = updatedStepHistory, xpHistory = updatedXpHistory)
-                userDatabase[loggedInUsername!!] = updatedUser
-                storageManager.saveUser(updatedUser)
 
                 val newlyUnlocked = getDynamicAchievements(updatedUser).filter { newAch -> newAch.isUnlocked && oldAchievements.none { it.title == newAch.title && it.isUnlocked } }
                 if (newlyUnlocked.isNotEmpty()) {
@@ -154,8 +186,7 @@ fun FitnessQuestApp() {
             updatedXpHistory[updatedXpHistory.lastIndex] += 1500
 
             val updatedUser = currentUser.copy(steps = newTotalSteps, level = newLevel, currentXp = newCurrentXp, maxXp = newMaxXp, stepHistory = updatedStepHistory, xpHistory = updatedXpHistory, workoutsCompleted = currentUser.workoutsCompleted + 1)
-            userDatabase[loggedInUsername!!] = updatedUser
-            storageManager.saveUser(updatedUser) 
+
 
             val newlyUnlocked = getDynamicAchievements(updatedUser).filter { newAch -> newAch.isUnlocked && oldAchievements.none { it.title == newAch.title && it.isUnlocked } }
             if (newlyUnlocked.isNotEmpty()) {
@@ -206,7 +237,10 @@ fun FitnessQuestApp() {
                     "history" -> HistoryScreen(stepData = currentUser.stepHistory, xpData = currentUser.xpHistory)
                     "leaderboard" -> LeaderboardScreen(currentUser = currentUser, allUsers = userDatabase.values.toList())
                     "achievements" -> AchievementsScreen(currentUser = currentUser)
-                    "profile" -> ProfileScreen(user = currentUser, onLogout = { storageManager.saveLoggedInUser(null); loggedInUsername = null })
+                    "profile" -> ProfileScreen(
+                        user = currentUser,
+                        onLogout = { authVm.signOut() }
+                    )
                 }
             }
         }

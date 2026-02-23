@@ -73,6 +73,10 @@ import android.hardware.SensorEventListener
 import android.hardware.SensorManager
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewmodel.compose.viewModel
+import android.util.Log
+
+//
+import com.google.firebase.firestore.FirebaseFirestore
 
 class StepViewModel : ViewModel() {
     private val _steps = mutableStateOf(0)
@@ -301,6 +305,19 @@ class StorageManager(private val prefs: SharedPreferences) {
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+
+        val TAG = "FQ_FIREBASE"
+
+        val db = FirebaseFirestore.getInstance()
+        db.collection("test")
+            .add(mapOf("connected" to true, "ts" to System.currentTimeMillis()))
+            .addOnSuccessListener { doc ->
+                Log.d(TAG, "Firestore connected. Wrote docId=${doc.id}")
+            }
+            .addOnFailureListener { e ->
+                Log.e(TAG, "Firestore error", e)
+            }
+
         enableEdgeToEdge()
         setContent {
             FitnessQuestTheme {

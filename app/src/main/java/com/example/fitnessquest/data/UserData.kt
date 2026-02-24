@@ -19,10 +19,19 @@ data class UserStats(
     val xpHistory: List<Int> = listOf(0, 0, 0, 0, 0, 0, 0),
     val workoutsCompleted: Int = 0
 )
-
+data class FirestoreUserStats(
+    val displayName: String = "",
+    val totalSteps: Long = 0,
+    val level: Int = 1,
+    val currentXp: Int = 0,
+    val workoutsCompleted: Int = 0
+)
 data class Achievement(val title: String, val description: String, val isUnlocked: Boolean, val icon: ImageVector)
-data class LeaderboardEntry(val rank: Int, val name: String, val level: Int, val isCurrentUser: Boolean = false)
-
+data class LeaderboardEntry(val rank: Int, val displayName: String, val level: Int, val isCurrentUser: Boolean = false)
+data class LeaderboardRow(
+    val displayName: String = "",
+    val totalSteps: Long = 0
+)
 fun getLevelData(totalSteps: Int): Triple<Int, Int, Int> {
     val baseXp = 1500.0
     val exponent = 1.8

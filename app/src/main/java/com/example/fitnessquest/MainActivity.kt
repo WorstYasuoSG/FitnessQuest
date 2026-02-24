@@ -27,6 +27,7 @@ import androidx.core.content.ContextCompat
 import androidx.lifecycle.viewmodel.compose.viewModel
 import android.content.Context
 
+
 // Imports from our new packages
 import com.example.fitnessquest.data.*
 import com.example.fitnessquest.sensor.*
@@ -38,7 +39,7 @@ import com.example.fitnessquest.ui.theme.FitnessQuestTheme
 import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.firestore.FieldValue
 import com.google.firebase.firestore.FirebaseFirestore
-
+import com.google.firebase.firestore.Query
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -51,19 +52,17 @@ class MainActivity : ComponentActivity() {
     }
 }
 
+
 @Composable
 fun FitnessQuestApp() {
     // 1. Initialize Sensor & Storage
     val stepViewModel: StepViewModel = viewModel()
     val realSessionSteps by stepViewModel.steps
     val context = LocalContext.current
-    val storageManager = remember { StorageManager(context.getSharedPreferences("FitnessQuestDB", Context.MODE_PRIVATE)) }
 
     // 2. Global State Variables
-    val userDatabase = remember { mutableStateMapOf<String, UserStats>() }
     var currentScreen by remember { mutableStateOf("home") }
     var isInitialized by remember { mutableStateOf(false) }
-    var sessionStepsProcessed by remember { mutableStateOf(0) }
     var achievementToPopUp by remember { mutableStateOf<Achievement?>(null) }
 
     // 3. Permission Handling
@@ -78,6 +77,43 @@ fun FitnessQuestApp() {
 
     val authVm: AuthViewModel = viewModel()
     val authState by authVm.uiState.collectAsState()
+
+    val db = remember { FirebaseFirestore.getInstance() }
+    val uid = authState.uid
+
+    var leaderboard by remember { mutableStateOf<List<LeaderboardRow>>(emptyList()) }
+    var leaderboardLoading by remember { mutableStateOf(false) }
+
+    DisposableEffect(uid) {
+        if (uid == null) {
+            leaderboard = emptyList()
+            leaderboardLoading = false
+            return@DisposableEffect onDispose { }
+        }
+
+        leaderboardLoading = true
+
+        val reg = db.collection("UserData")
+            .orderBy("totalSteps", Query.Direction.DESCENDING)
+            .limit(50)
+            .addSnapshotListener { snaps, err ->
+                if (err != null || snaps == null) {
+                    leaderboardLoading = false
+                    return@addSnapshotListener
+                }
+
+                leaderboard = snaps.documents.mapNotNull { d ->
+                    d.toObject(LeaderboardRow::class.java)
+                }
+
+                leaderboardLoading = false
+            }
+
+        onDispose { reg.remove() }
+    }
+
+    var currentStats by remember { mutableStateOf<UserStats?>(null) }
+    var loadingStats by remember { mutableStateOf(true) }
     val handleAuth: (String, String?, String, Boolean) -> Unit =
         { identifier, email, password, isSignUp ->
 
@@ -110,18 +146,61 @@ fun FitnessQuestApp() {
         }
     }
 
-    LaunchedEffect(authState.uid) {
-        if (authState.uid != null) currentScreen = "home"
+// React to login and route to home
+    LaunchedEffect(uid) {
+        if (uid != null) currentScreen = "home"
+    }
+
+// Firestore listener: userStats/{uid}
+    DisposableEffect(uid) {
+        if (uid == null) {
+            loadingStats = false
+            currentStats = null
+            return@DisposableEffect onDispose { }
+        }
+
+        loadingStats = true
+
+        val reg = db.collection("UserData")
+            .document(uid)
+            .addSnapshotListener { snap, err ->
+                if (err != null) {
+                    // optional: store error somewhere
+                    loadingStats = false
+                    return@addSnapshotListener
+                }
+
+                if (snap != null && snap.exists()) {
+                    val fs = snap.toObject(FirestoreUserStats::class.java)
+                    currentStats = fs?.let {
+                        UserStats(
+                            username = it.displayName.ifBlank { "Unknown" },
+                            level = it.level,
+                            currentXp = it.currentXp,
+                            steps = it.totalSteps.toInt(),
+                            workoutsCompleted = it.workoutsCompleted
+                            // stepHistory/xpHistory keep defaults from UserStats
+                        )
+                    }                } else {
+                    currentStats = null
+                }
+
+                loadingStats = false
+            }
+
+        onDispose {
+            reg.remove()
+        }
     }
     DisposableEffect(Unit) { onDispose { sensorManager?.stop() } }
 
     // 5. Load Initial Data
     LaunchedEffect(Unit) {
-        userDatabase.putAll(storageManager.getAllUsers().associateBy { it.username })
         isInitialized = true
-
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU && !hasNotificationPermission) permissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q && !hasActivityPermission) activityPermissionLauncher.launch(Manifest.permission.ACTIVITY_RECOGNITION)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU && !hasNotificationPermission)
+            permissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q && !hasActivityPermission)
+            activityPermissionLauncher.launch(Manifest.permission.ACTIVITY_RECOGNITION)
     }
 
     if (!isInitialized) return
@@ -147,52 +226,73 @@ fun FitnessQuestApp() {
             isLoading = authState.loading
         )
     } else {
-        val uid = authState.uid!!
-        val currentUser = remember(uid) { UserStats(username = "Loading...") }
-        // --- Live Hardware Sensor Processor ---
-        LaunchedEffect(realSessionSteps) {
-            if (realSessionSteps > sessionStepsProcessed) {
-                val deltaSteps = realSessionSteps - sessionStepsProcessed
-                sessionStepsProcessed = realSessionSteps
+        val currentUser = currentStats
+        if (loadingStats || currentUser == null) {
+            Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                CircularProgressIndicator()
+            }
+            return
+        }        // --- Live Hardware Sensor Processor ---
+        LaunchedEffect(uid, realSessionSteps) {
+            if (uid == null) return@LaunchedEffect
+            if (!hasActivityPermission) return@LaunchedEffect
 
-                val oldAchievements = getDynamicAchievements(currentUser)
-                val newTotalSteps = currentUser.steps + deltaSteps
-                val (newLevel, newCurrentXp, newMaxXp) = getLevelData(newTotalSteps)
+            val sessionRef = db.collection("StepSessions").document(uid)
+            val statsRef = db.collection("UserData").document(uid)
 
-                val updatedStepHistory = currentUser.stepHistory.toMutableList()
-                updatedStepHistory[updatedStepHistory.lastIndex] += deltaSteps
-                val updatedXpHistory = currentUser.xpHistory.toMutableList()
-                updatedXpHistory[updatedXpHistory.lastIndex] += deltaSteps
+            // Only run when steps increase
+            if (realSessionSteps <= 0) return@LaunchedEffect
 
-                val updatedUser = currentUser.copy(steps = newTotalSteps, level = newLevel, currentXp = newCurrentXp, maxXp = newMaxXp, stepHistory = updatedStepHistory, xpHistory = updatedXpHistory)
+            // Use a transaction so delta + lastSessionSteps update is atomic
+            db.runTransaction { txn ->
+                val sessionSnap = txn.get(sessionRef)
+                val last = (sessionSnap.getLong("LastSessionSteps") ?: 0L).toInt()
 
-                val newlyUnlocked = getDynamicAchievements(updatedUser).filter { newAch -> newAch.isUnlocked && oldAchievements.none { it.title == newAch.title && it.isUnlocked } }
-                if (newlyUnlocked.isNotEmpty()) {
-                    achievementToPopUp = newlyUnlocked.first()
-                    if (hasNotificationPermission) sendAchievementNotification(context, achievementToPopUp!!.title, achievementToPopUp!!.description)
+                val delta = realSessionSteps - last
+                if (delta <= 0) {
+                    // Nothing new, or sensor reset to smaller value
+                    // In case of reset, you can decide to set lastSessionSteps = realSessionSteps
+                    txn.set(sessionRef, mapOf("LastSessionSteps" to realSessionSteps, "UpdatedAt" to FieldValue.serverTimestamp()), com.google.firebase.firestore.SetOptions.merge())
+                    return@runTransaction null
                 }
+
+                // increment totalSteps by delta
+                txn.set(
+                    statsRef,
+                    mapOf(
+                        "totalSteps" to FieldValue.increment(delta.toLong()),
+                        "updatedAt" to FieldValue.serverTimestamp()
+                    ),
+                    com.google.firebase.firestore.SetOptions.merge()
+                )
+
+                // store new lastSessionSteps
+                txn.set(
+                    sessionRef,
+                    mapOf(
+                        "LastSessionSteps" to realSessionSteps,
+                        "UpdatedAt" to FieldValue.serverTimestamp()
+                    ),
+                    com.google.firebase.firestore.SetOptions.merge()
+                )
+
+                null
             }
         }
 
         // --- Mock Workout Simulator (for testing on emulator) ---
-        val simulateWorkout = {
-            val oldAchievements = getDynamicAchievements(currentUser)
-            val newTotalSteps = currentUser.steps + 1500
-            val (newLevel, newCurrentXp, newMaxXp) = getLevelData(newTotalSteps)
+        val simulateWorkout: () -> Unit = simulateWorkout@{
+            val uidLocal = uid ?: return@simulateWorkout
 
-            val updatedStepHistory = currentUser.stepHistory.toMutableList()
-            updatedStepHistory[updatedStepHistory.lastIndex] += 1500
-            val updatedXpHistory = currentUser.xpHistory.toMutableList()
-            updatedXpHistory[updatedXpHistory.lastIndex] += 1500
-
-            val updatedUser = currentUser.copy(steps = newTotalSteps, level = newLevel, currentXp = newCurrentXp, maxXp = newMaxXp, stepHistory = updatedStepHistory, xpHistory = updatedXpHistory, workoutsCompleted = currentUser.workoutsCompleted + 1)
-
-
-            val newlyUnlocked = getDynamicAchievements(updatedUser).filter { newAch -> newAch.isUnlocked && oldAchievements.none { it.title == newAch.title && it.isUnlocked } }
-            if (newlyUnlocked.isNotEmpty()) {
-                achievementToPopUp = newlyUnlocked.first() 
-                if (hasNotificationPermission) sendAchievementNotification(context, achievementToPopUp!!.title, achievementToPopUp!!.description)
-            }
+            val statsRef = db.collection("UserData").document(uidLocal)
+            statsRef.set(
+                mapOf(
+                    "totalSteps" to FieldValue.increment(1500),
+                    "workoutsCompleted" to FieldValue.increment(1),
+                    "updatedAt" to FieldValue.serverTimestamp()
+                ),
+                com.google.firebase.firestore.SetOptions.merge()
+            )
         }
 
         // --- In-App Alert Dialog ---
@@ -235,7 +335,7 @@ fun FitnessQuestApp() {
                 when (currentScreen) {
                     "home" -> HomeScreen(user = currentUser, onWorkout = simulateWorkout)
                     "history" -> HistoryScreen(stepData = currentUser.stepHistory, xpData = currentUser.xpHistory)
-                    "leaderboard" -> LeaderboardScreen(currentUser = currentUser, allUsers = userDatabase.values.toList())
+                    "leaderboard" -> LeaderboardScreen(currentUser = currentUser,leaderboard = leaderboard,isLoading = leaderboardLoading)
                     "achievements" -> AchievementsScreen(currentUser = currentUser)
                     "profile" -> ProfileScreen(
                         user = currentUser,

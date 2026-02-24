@@ -86,7 +86,7 @@ class AuthViewModel : ViewModel() {
                 } else {
                     // lookup username → email
                     val snap = db.collection("Users")
-                        .whereEqualTo("username", input.trim())
+                        .whereEqualTo("Username", input.trim())
                         .limit(1)
                         .get()
                         .await()
@@ -95,7 +95,7 @@ class AuthViewModel : ViewModel() {
                         throw Exception("Account not found.")
                     }
 
-                    snap.documents.first().getString("email")
+                    snap.documents.first().getString("Email")
                         ?: throw Exception("User email missing.")
                 }
 

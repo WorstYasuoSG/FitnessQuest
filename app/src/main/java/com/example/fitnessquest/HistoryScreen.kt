@@ -27,14 +27,20 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import com.example.fitnessquest.data.UserStats
 import java.text.SimpleDateFormat
 import java.util.Calendar
 import java.util.Locale
 import java.util.TimeZone
 
 @Composable
-fun HistoryScreen(stepData: List<Int>, xpData: List<Int>) {
+fun HistoryScreen(user: UserStats) {
     val scrollState = rememberScrollState()
+
+    // Use data directly from the UserStats object
+    val stepData = user.stepHistory
+    val xpData = user.xpHistory
+
     val daysOfWeek = remember {
         val tz = TimeZone.getTimeZone("Asia/Singapore")
         val format = SimpleDateFormat("EEE", Locale.getDefault()).apply { timeZone = tz }
@@ -43,23 +49,32 @@ fun HistoryScreen(stepData: List<Int>, xpData: List<Int>) {
         for (i in 0..6) { daysList.add(0, format.format(cal.time)); cal.add(Calendar.DAY_OF_YEAR, -1) }
         daysList
     }
+
     val currentMonthYear = remember {
         val tz = TimeZone.getTimeZone("Asia/Singapore")
         SimpleDateFormat("MMMM yyyy", Locale.getDefault()).apply { timeZone = tz }.format(Calendar.getInstance(tz).time)
     }
-    val totalSteps = stepData.sum()
-    val totalXp = xpData.sum()
+
+    // Use Lifetime stats for the summary cards
+    val totalSteps = user.steps
+    val currentLevel = user.level
+
     val stepDisplay = if (totalSteps >= 1000) "${totalSteps / 1000}.${(totalSteps % 1000) / 100}k" else "$totalSteps"
 
     Column(modifier = Modifier.fillMaxSize().verticalScroll(scrollState).padding(16.dp)) {
         Text("Quest Logs", style = MaterialTheme.typography.headlineLarge, color = MaterialTheme.colorScheme.primary)
         Text(currentMonthYear, style = MaterialTheme.typography.titleMedium, color = Color.Gray)
+
         Spacer(modifier = Modifier.height(24.dp))
+
+        // Updated Summary Cards to show Lifetime Steps and Current Level
         Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(16.dp)) {
-            SummaryCard("Total Steps", stepDisplay, Icons.Default.Person, Modifier.weight(1f))
-            SummaryCard("XP Gained", "$totalXp", Icons.Default.Star, Modifier.weight(1f))
+            SummaryCard("Lifetime Steps", stepDisplay, Icons.Default.Person, Modifier.weight(1f))
+            SummaryCard("Current Level", "$currentLevel", Icons.Default.Star, Modifier.weight(1f))
         }
+
         Spacer(modifier = Modifier.height(32.dp))
+
         Card(modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(20.dp), border = BorderStroke(1.dp, MaterialTheme.colorScheme.surfaceVariant), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)) {
             Column(modifier = Modifier.padding(20.dp)) {
                 Text("Weekly Steps", style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.onSurface)
@@ -67,14 +82,18 @@ fun HistoryScreen(stepData: List<Int>, xpData: List<Int>) {
                 StepBarChart(stepData, daysOfWeek)
             }
         }
+
         Spacer(modifier = Modifier.height(24.dp))
+
         Card(modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(20.dp), border = BorderStroke(1.dp, MaterialTheme.colorScheme.surfaceVariant), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)) {
             Column(modifier = Modifier.padding(20.dp)) {
                 Text("XP History", style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.onSurface)
                 Spacer(modifier = Modifier.height(16.dp))
+                // Note: In our current logic, XP history roughly mirrors steps, but we display it here for consistency
                 XpLineChart(xpData, daysOfWeek)
             }
         }
+
         Spacer(modifier = Modifier.height(32.dp))
     }
 }

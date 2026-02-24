@@ -176,7 +176,7 @@ fun FitnessQuestApp() {
                             username = it.displayName.ifBlank { "Unknown" },
                             level = it.level,
                             currentXp = it.currentXp,
-                            maxXp = calculatedMaxXp, // <--- THIS MAKES THE PROGRESS BAR WORK
+                            maxXp = calculatedMaxXp,
                             steps = it.totalSteps.toInt(),
                             workoutsCompleted = it.workoutsCompleted
                         )
@@ -210,10 +210,7 @@ fun FitnessQuestApp() {
     // --- Authentication Flow ---
     if (authState.uid == null) {
         LoginScreen(
-            onAuthenticate = handleAuth,
-            // Pass these if LoginScreen supports them, otherwise remove
-            // externalError = authState.error,
-            // isLoading = authState.loading
+            onAuthenticate = handleAuth
         )
     } else {
         val currentUser = currentStats
@@ -353,7 +350,7 @@ fun FitnessQuestApp() {
             Box(modifier = Modifier.padding(innerPadding).background(MaterialTheme.colorScheme.background)) {
                 when (currentScreen) {
                     "home" -> HomeScreen(user = currentUser, onWorkout = simulateWorkout)
-                    "history" -> HistoryScreen(stepData = currentUser.stepHistory, xpData = currentUser.xpHistory)
+                    "history" -> HistoryScreen(user = currentUser)
                     "leaderboard" -> LeaderboardScreen(currentUser = currentUser, leaderboard = leaderboard, isLoading = leaderboardLoading)
                     "achievements" -> AchievementsScreen(currentUser = currentUser)
                     "profile" -> ProfileScreen(

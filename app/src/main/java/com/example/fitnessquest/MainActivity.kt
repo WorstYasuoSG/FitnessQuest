@@ -35,11 +35,12 @@ import com.example.fitnessquest.utils.*
 import com.example.fitnessquest.ui.theme.FitnessQuestTheme
 
 //Firebase imports
-
 import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.firestore.FieldValue
 import com.google.firebase.firestore.FirebaseFirestore
 import com.google.firebase.firestore.Query
+import com.google.firebase.firestore.SetOptions
+
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -84,6 +85,7 @@ fun FitnessQuestApp() {
     var leaderboard by remember { mutableStateOf<List<LeaderboardRow>>(emptyList()) }
     var leaderboardLoading by remember { mutableStateOf(false) }
 
+    // --- Leaderboard Listener ---
     DisposableEffect(uid) {
         if (uid == null) {
             leaderboard = emptyList()
@@ -114,24 +116,19 @@ fun FitnessQuestApp() {
 
     var currentStats by remember { mutableStateOf<UserStats?>(null) }
     var loadingStats by remember { mutableStateOf(true) }
+
     val handleAuth: (String, String?, String, Boolean) -> Unit =
         { identifier, email, password, isSignUp ->
-
             if (isSignUp) {
-
                 val safeEmail = email
-
-                if (safeEmail.isNullOrBlank()) {
+                if (!safeEmail.isNullOrBlank()) {
+                    authVm.signUpWithEmail(
+                        email = safeEmail,
+                        password = password,
+                        username = identifier
+                    )
                 }
-
-                authVm.signUpWithEmail(
-                    email = safeEmail!!,
-                    password = password,
-                    username = identifier
-                )
-
             } else {
-
                 authVm.signInWithEmailOrUsername(
                     identifier,
                     password
@@ -146,12 +143,12 @@ fun FitnessQuestApp() {
         }
     }
 
-// React to login and route to home
+    // React to login and route to home
     LaunchedEffect(uid) {
         if (uid != null) currentScreen = "home"
     }
 
-// Firestore listener: userStats/{uid}
+    // --- User Stats Listener ---
     DisposableEffect(uid) {
         if (uid == null) {
             loadingStats = false
@@ -165,7 +162,6 @@ fun FitnessQuestApp() {
             .document(uid)
             .addSnapshotListener { snap, err ->
                 if (err != null) {
-                    // optional: store error somewhere
                     loadingStats = false
                     return@addSnapshotListener
                 }
@@ -173,15 +169,19 @@ fun FitnessQuestApp() {
                 if (snap != null && snap.exists()) {
                     val fs = snap.toObject(FirestoreUserStats::class.java)
                     currentStats = fs?.let {
+                        // Calculate maxXp locally based on totalSteps so the UI bar is correct
+                        val (_, _, calculatedMaxXp) = getLevelData(it.totalSteps.toInt())
+
                         UserStats(
                             username = it.displayName.ifBlank { "Unknown" },
                             level = it.level,
                             currentXp = it.currentXp,
+                            maxXp = calculatedMaxXp, // <--- THIS MAKES THE PROGRESS BAR WORK
                             steps = it.totalSteps.toInt(),
                             workoutsCompleted = it.workoutsCompleted
-                            // stepHistory/xpHistory keep defaults from UserStats
                         )
-                    }                } else {
+                    }
+                } else {
                     currentStats = null
                 }
 
@@ -192,6 +192,7 @@ fun FitnessQuestApp() {
             reg.remove()
         }
     }
+
     DisposableEffect(Unit) { onDispose { sensorManager?.stop() } }
 
     // 5. Load Initial Data
@@ -209,21 +210,10 @@ fun FitnessQuestApp() {
     // --- Authentication Flow ---
     if (authState.uid == null) {
         LoginScreen(
-           /* onAuthenticate = { identifier, email, password, isSignUp ->
-                if (isSignUp) {
-
-                    authVm.signUpWithEmail(
-                        email = email!!,
-                        password = password,
-                        username = identifier
-                    )
-                } else {
-                    authVm.signInWithEmailOrUsername(identifier, password)
-                }
-            },*/
             onAuthenticate = handleAuth,
-            externalError = authState.error,
-            isLoading = authState.loading
+            // Pass these if LoginScreen supports them, otherwise remove
+            // externalError = authState.error,
+            // isLoading = authState.loading
         )
     } else {
         val currentUser = currentStats
@@ -232,7 +222,9 @@ fun FitnessQuestApp() {
                 CircularProgressIndicator()
             }
             return
-        }        // --- Live Hardware Sensor Processor ---
+        }
+
+        // --- Live Hardware Sensor Processor (REAL-TIME XP CONVERSION) ---
         LaunchedEffect(uid, realSessionSteps) {
             if (uid == null) return@LaunchedEffect
             if (!hasActivityPermission) return@LaunchedEffect
@@ -243,56 +235,83 @@ fun FitnessQuestApp() {
             // Only run when steps increase
             if (realSessionSteps <= 0) return@LaunchedEffect
 
-            // Use a transaction so delta + lastSessionSteps update is atomic
+            // Use a transaction to safely read totalSteps, calculate new Level/XP, and update
             db.runTransaction { txn ->
                 val sessionSnap = txn.get(sessionRef)
                 val last = (sessionSnap.getLong("LastSessionSteps") ?: 0L).toInt()
 
                 val delta = realSessionSteps - last
+
+                // If delta is 0 or negative (sensor reset), just update session tracking
                 if (delta <= 0) {
-                    // Nothing new, or sensor reset to smaller value
-                    // In case of reset, you can decide to set lastSessionSteps = realSessionSteps
-                    txn.set(sessionRef, mapOf("LastSessionSteps" to realSessionSteps, "UpdatedAt" to FieldValue.serverTimestamp()), com.google.firebase.firestore.SetOptions.merge())
+                    txn.set(
+                        sessionRef,
+                        mapOf("LastSessionSteps" to realSessionSteps, "UpdatedAt" to FieldValue.serverTimestamp()),
+                        SetOptions.merge()
+                    )
                     return@runTransaction null
                 }
 
-                // increment totalSteps by delta
+                // 1. Get current total steps from Firestore
+                val statsSnap = txn.get(statsRef)
+                val currentTotalSteps = (statsSnap.getLong("totalSteps") ?: 0L).toInt()
+                val newTotalSteps = currentTotalSteps + delta
+
+                // 2. Calculate new Level and XP using your algorithm
+                val (newLevel, newCurrentXp, _) = getLevelData(newTotalSteps)
+
+                // 3. Update UserData with ALL new stats
                 txn.set(
                     statsRef,
                     mapOf(
-                        "totalSteps" to FieldValue.increment(delta.toLong()),
+                        "totalSteps" to newTotalSteps.toLong(),
+                        "level" to newLevel,
+                        "currentXp" to newCurrentXp,
                         "updatedAt" to FieldValue.serverTimestamp()
                     ),
-                    com.google.firebase.firestore.SetOptions.merge()
+                    SetOptions.merge()
                 )
 
-                // store new lastSessionSteps
+                // 4. Update StepSession
                 txn.set(
                     sessionRef,
                     mapOf(
                         "LastSessionSteps" to realSessionSteps,
                         "UpdatedAt" to FieldValue.serverTimestamp()
                     ),
-                    com.google.firebase.firestore.SetOptions.merge()
+                    SetOptions.merge()
                 )
 
                 null
             }
         }
 
-        // --- Mock Workout Simulator (for testing on emulator) ---
+        // --- Mock Workout Simulator (UPDATED FOR XP) ---
         val simulateWorkout: () -> Unit = simulateWorkout@{
             val uidLocal = uid ?: return@simulateWorkout
-
             val statsRef = db.collection("UserData").document(uidLocal)
-            statsRef.set(
-                mapOf(
-                    "totalSteps" to FieldValue.increment(1500),
-                    "workoutsCompleted" to FieldValue.increment(1),
-                    "updatedAt" to FieldValue.serverTimestamp()
-                ),
-                com.google.firebase.firestore.SetOptions.merge()
-            )
+
+            db.runTransaction { txn ->
+                val snapshot = txn.get(statsRef)
+                val currentTotal = (snapshot.getLong("totalSteps") ?: 0L).toInt()
+                val currentWorkouts = (snapshot.getLong("workoutsCompleted") ?: 0L).toInt()
+
+                val newTotal = currentTotal + 1500
+                // Calculate new Level/XP for the simulator too!
+                val (newLevel, newXp, _) = getLevelData(newTotal)
+
+                txn.set(
+                    statsRef,
+                    mapOf(
+                        "totalSteps" to newTotal.toLong(),
+                        "level" to newLevel,
+                        "currentXp" to newXp,
+                        "workoutsCompleted" to currentWorkouts + 1,
+                        "updatedAt" to FieldValue.serverTimestamp()
+                    ),
+                    SetOptions.merge()
+                )
+            }
         }
 
         // --- In-App Alert Dialog ---
@@ -301,7 +320,7 @@ fun FitnessQuestApp() {
                 onDismissRequest = { achievementToPopUp = null },
                 shape = RoundedCornerShape(24.dp),
                 containerColor = MaterialTheme.colorScheme.surface,
-                title = { 
+                title = {
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Icon(Icons.Default.Star, null, tint = MaterialTheme.colorScheme.tertiary, modifier = Modifier.size(36.dp))
                         Spacer(Modifier.width(12.dp))
@@ -335,7 +354,7 @@ fun FitnessQuestApp() {
                 when (currentScreen) {
                     "home" -> HomeScreen(user = currentUser, onWorkout = simulateWorkout)
                     "history" -> HistoryScreen(stepData = currentUser.stepHistory, xpData = currentUser.xpHistory)
-                    "leaderboard" -> LeaderboardScreen(currentUser = currentUser,leaderboard = leaderboard,isLoading = leaderboardLoading)
+                    "leaderboard" -> LeaderboardScreen(currentUser = currentUser, leaderboard = leaderboard, isLoading = leaderboardLoading)
                     "achievements" -> AchievementsScreen(currentUser = currentUser)
                     "profile" -> ProfileScreen(
                         user = currentUser,

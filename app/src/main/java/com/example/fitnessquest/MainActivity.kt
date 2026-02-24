@@ -340,7 +340,6 @@ fun FitnessQuestApp() {
             bottomBar = {
                 NavigationBar(containerColor = MaterialTheme.colorScheme.surface, tonalElevation = 0.dp) {
                     NavigationBarItem(icon = { Icon(Icons.Default.Home, null) }, label = { Text("Home", fontSize = 10.sp) }, selected = currentScreen == "home", onClick = { currentScreen = "home" })
-                    NavigationBarItem(icon = { Icon(Icons.Default.DateRange, null) }, label = { Text("Logs", fontSize = 10.sp) }, selected = currentScreen == "history", onClick = { currentScreen = "history" })
                     NavigationBarItem(icon = { Icon(Icons.Default.List, null) }, label = { Text("Rank", fontSize = 10.sp) }, selected = currentScreen == "leaderboard", onClick = { currentScreen = "leaderboard" })
                     NavigationBarItem(icon = { Icon(Icons.Default.Star, null) }, label = { Text("Awards", fontSize = 10.sp) }, selected = currentScreen == "achievements", onClick = { currentScreen = "achievements" })
                     NavigationBarItem(icon = { Icon(Icons.Default.Person, null) }, label = { Text("Profile", fontSize = 10.sp) }, selected = currentScreen == "profile", onClick = { currentScreen = "profile" })
@@ -350,7 +349,6 @@ fun FitnessQuestApp() {
             Box(modifier = Modifier.padding(innerPadding).background(MaterialTheme.colorScheme.background)) {
                 when (currentScreen) {
                     "home" -> HomeScreen(user = currentUser, onWorkout = simulateWorkout)
-                    "history" -> HistoryScreen(user = currentUser)
                     "leaderboard" -> LeaderboardScreen(currentUser = currentUser, leaderboard = leaderboard, isLoading = leaderboardLoading)
                     "achievements" -> AchievementsScreen(currentUser = currentUser)
                     "profile" -> ProfileScreen(
